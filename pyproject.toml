@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dreamer-server"
+version = "0.1.0"
+description = "Self-hostable framework for developing coding-agent context from lived experience"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0,<3",
+    "pyyaml>=6.0,<7",
+    "starlette>=0.36,<1",
+    "click>=8.1,<9",
+    "mcp>=1.27.0",
+    "uvicorn>=0.27,<1",
+]
+
+[project.optional-dependencies]
+defaults = [
+    "dreamer-server[sqlite]",
+    "dreamer-server[claude-agent]",
+    "dreamer-server[apscheduler]",
+    "dreamer-server[git]",
+]
+sqlite = [
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "aiosqlite>=0.19,<1",
+]
+claude-agent = [
+    "anthropic>=0.39,<1",
+]
+apscheduler = [
+    "apscheduler>=3.10,<4",
+]
+git = [
+    "gitpython>=3.1,<4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dreamer"]
+
+[project.scripts]
+dreamer = "dreamer.cli.main:main"
+dreamer-simple-auth = "dreamer.contrib.auth.simple_token.cli:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "ASYNC",
+    "UP",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dreamer"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "dreamer.api.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "dreamer.server.*"
+strict = true
+
+[[tool.mypy.overrides]]
+module = "dreamer.contrib.*"
+disallow_untyped_defs = false
+strict = false
+
+[dependency-groups]
+dev = [
+    "asgi-lifespan>=2.1.0",
+    "coverage>=7.13.5",
+    "mypy>=1.20.2",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.12",
+    "types-jsonschema>=4.26.0.20260408",
+    "types-pyyaml>=6.0.12.20260408",
+]
