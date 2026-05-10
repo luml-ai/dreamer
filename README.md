@@ -37,6 +37,18 @@ any default by pointing at a different class.
   <img alt="Image" src="https://github.com/Dataforce-Solutions/static_assets/blob/main/CTA-Compact-Light.png?raw=true">
 </picture>
 
+<hr>
+Dreamer is part of the broader <a href="https://github.com/luml-ai/luml">LUML</a> effort to build open infrastructure for autonomous ML agents. <br/><br/>
+
+
+<div align="center">
+
+<a href="https://github.com/luml-ai/luml"><picture><source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/core.svg"><source media="(prefers-color-scheme: dark)" srcset="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/e2f73a24d9b77decd84d045ec28955fd3b82dbeb/core-dark.svg"><img src="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/core.svg" alt="Core — registry, deployments, monitoring" width="270"/></picture></a>
+<a href="https://github.com/luml-ai/luml"><picture><source media="(prefers-color-scheme: light)" srcset="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/prisma.svg"><source media="(prefers-color-scheme: dark)" srcset="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/e2f73a24d9b77decd84d045ec28955fd3b82dbeb/prisma-darkl.svg"><img src="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/prisma.svg" alt="Prisma — autonomous ML research agents" width="270"/></picture></a>
+<a href="https://github.com/luml-ai/luml"><picture><source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/flow.svg"><source media="(prefers-color-scheme: dark)" srcset="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/e2f73a24d9b77decd84d045ec28955fd3b82dbeb/flow-dark.svg"><img src="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/flow.svg" alt="Flow — experiment tracking and tracing" width="270"/></picture></a>
+
+</div>
+
 ## Get started
 
 Dreamer requires Python 3.12 or later. The `defaults` extra pulls in SQLite
@@ -175,19 +187,5 @@ class TestPostgresSTMStore(STMStoreConformance):
 
 MIT. See [LICENSE](LICENSE).
 
-<hr>
-Dreamer is part of the broader <a href="https://github.com/luml-ai/luml">LUML</a> effort to build open infrastructure for autonomous ML agents. <br/><br/>
 
-<div align="center">
 
-<a href="https://github.com/luml-ai/luml">
-  <img src="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/core.svg" alt="Core — registry, deployments, monitoring" width="270"/>
-</a>
-<a href="https://github.com/luml-ai/luml">
-  <img src="https://gist.githubusercontent.com/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/prisma.svg" alt="Prisma — autonomous ML research agents" width="270"/>
-</a>
-<a href="https://github.com/luml-ai/luml">
-  <img src="https://raw.githubusercontent.com/gist/OKUA1/bae081e15b6efae41cc42c7f88c8c2a2/raw/8e82db4bbba01f768176560ce6f039113ebd3d30/flow.svg" alt="Flow — experiment tracking and tracing" width="270"/>
-</a>
-
-</div> 
