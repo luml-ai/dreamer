@@ -40,20 +40,22 @@ def _make_memory(
     *,
     mid: str,
     title: str,
+    type: str = "observation",
     content: str = "body",
     tags: list[str] | None = None,
     metadata: dict[str, object] | None = None,
+    submitted_at: datetime | None = None,
 ) -> Memory:
     return Memory(
         id=mid,
         tenant_id="default",
         agent_id="agent-1",
-        type="observation",
+        type=type,
         title=title,
         content=content,
         tags=tags or [],
         metadata=metadata or {},
-        submitted_at=datetime(2026, 5, 2, 10, 0, 0, tzinfo=UTC),
+        submitted_at=submitted_at or datetime(2026, 5, 2, 10, 0, 0, tzinfo=UTC),
     )
 
 
@@ -244,6 +246,112 @@ async def test_jsonl_rejects_wrong_tenant_scope(tmp_path: Path) -> None:
                 ctx=_ctx(),
                 services=_services(),
             )
+
+
+def _mixed_batch() -> MemoryBatch:
+    def confirmation(mid: str, target: object, *, hour: int) -> Memory:
+        return _make_memory(
+            mid=mid,
+            title=f"context confirmed: {mid}",
+            type="context_confirmed",
+            content="",
+            metadata={"target": target},
+            submitted_at=datetime(2026, 5, 2, hour, 0, 0, tzinfo=UTC),
+        )
+
+    return _batch(
+        [
+            confirmation("c1", "topic-a", hour=8),
+            confirmation("c2", "topic-a", hour=9),
+            confirmation("c3", "Not A Slug!", hour=10),
+            _make_memory(
+                mid="f1",
+                title="context flagged: topic-b",
+                type="context_flagged",
+                content="Context said X; observed Y.",
+                metadata={"targets": ["topic-b"], "quote": "do X"},
+            ),
+            _make_memory(mid="m1", title="first obs"),
+            _make_memory(mid="m2", title="second obs"),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_markdown_mixed_batch_aggregates_confirmations_and_keeps_flags(
+    tmp_path: Path,
+) -> None:
+    s = MarkdownPerMemorySerializer()
+    target = tmp_path / "inbox"
+    with TenantScope.set("default"):
+        await s.write(_mixed_batch(), target=target, ctx=_ctx(), services=_services())
+
+    # Observations serialize exactly as today, at the inbox root.
+    root_files = sorted(p.name for p in target.iterdir() if p.is_file())
+    assert root_files == ["m1-first-obs.md", "m2-second-obs.md"]
+
+    # No individual confirmation files anywhere.
+    all_files = [p.name for p in target.rglob("*") if p.is_file()]
+    assert not any(name.startswith(("c1-", "c2-", "c3-")) for name in all_files)
+
+    report = (target / "feedback" / "confirmations.md").read_text(encoding="utf-8")
+    assert "`topic-a`: 2 confirmation(s), latest 2026-05-02T09:00:00Z" in report
+    assert "Not A Slug!" in report
+
+    flag_files = sorted(p.name for p in (target / "feedback" / "flags").iterdir())
+    assert flag_files == ["f1-context-flagged-topic-b.md"]
+    flag_text = (target / "feedback" / "flags" / flag_files[0]).read_text(encoding="utf-8")
+    assert "Context said X; observed Y." in flag_text
+    assert "targets: [topic-b]" in flag_text
+    assert "quote: " in flag_text
+
+    fragment = s.prompt_fragment(_mixed_batch())
+    assert "2 markdown file(s)" in fragment
+    assert "inbox/feedback/confirmations.md" in fragment
+    assert "inbox/feedback/flags/" in fragment
+    assert "unanchored" in fragment
+
+
+@pytest.mark.asyncio
+async def test_jsonl_mixed_batch_aggregates_confirmations_and_keeps_flags(
+    tmp_path: Path,
+) -> None:
+    s = JsonlSerializer()
+    target = tmp_path / "inbox"
+    with TenantScope.set("default"):
+        await s.write(_mixed_batch(), target=target, ctx=_ctx(), services=_services())
+
+    lines = [
+        json.loads(line)
+        for line in (target / "batch.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert [p["id"] for p in lines] == ["m1", "m2", "f1"]
+    flag = next(p for p in lines if p["type"] == "context_flagged")
+    assert flag["metadata"] == {"targets": ["topic-b"], "quote": "do X"}
+
+    report = (target / "feedback" / "confirmations.md").read_text(encoding="utf-8")
+    assert "`topic-a`: 2 confirmation(s), latest 2026-05-02T09:00:00Z" in report
+    assert "Not A Slug!" in report
+
+    fragment = s.prompt_fragment(_mixed_batch())
+    assert "3 JSON object(s)" in fragment
+    assert "context_flagged" in fragment
+    assert "inbox/feedback/confirmations.md" in fragment
+
+
+@pytest.mark.asyncio
+async def test_feedback_free_batch_writes_no_feedback_dir(tmp_path: Path) -> None:
+    for serializer in (MarkdownPerMemorySerializer(), JsonlSerializer()):
+        target = tmp_path / f"inbox-{serializer.kind}"
+        with TenantScope.set("default"):
+            await serializer.write(
+                _batch([_make_memory(mid="m1", title="obs")]),
+                target=target,
+                ctx=_ctx(),
+                services=_services(),
+            )
+        assert not (target / "feedback").exists()
 
 
 def test_kinds_are_distinct() -> None:

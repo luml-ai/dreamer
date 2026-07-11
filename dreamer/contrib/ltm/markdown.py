@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from collections import defaultdict
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 import yaml
@@ -40,9 +41,12 @@ from dreamer.api.contexts import (
     OpenWorkspaceContext,
     SetContextPendingContext,
 )
+from dreamer.api.errors import ConfigError, WorkspaceError
 from dreamer.api.stores import ContextPendingStore, LTMStore
 from dreamer.api.tenants import TenantScope
 from dreamer.api.types import Diff, FileViewable, TenantId, Workspace
+
+logger = logging.getLogger(__name__)
 
 INDEX_FILENAME = "INDEX.md"
 SCHEMA_FILENAME = "_meta/schema.md"
@@ -60,6 +64,9 @@ reads this file every run to recall the rules of the layout.
 - `INDEX.md` — auto-generated table of contents (do not edit manually).
 - `topics/<slug>.md` — evergreen synthesis pages.
 - `incidents/<YYYY-MM>/<YYYY-MM-DD>-<slug>.md` — point-in-time observations.
+- `archive/<original relative path>` — retired entries (see "Archive" below).
+- `archive/LOG.md` — operations log, one line per reinforce/archive/discard
+  decision.
 - `_meta/` — store-owned metadata. Do not edit.
 
 ## Frontmatter
@@ -77,8 +84,34 @@ Every topic and incident file MUST start with YAML frontmatter:
     sources: [stm:<memory-id>]
     ---
 
+Optional reinforcement fields, maintained by the dream agent from agent
+feedback:
+
+    confirmations: <int>            # count of distinct confirmation events
+    last_confirmed: <timestamp>     # most recent confirmation or re-validation
+    importance: pinned | normal | ephemeral   # absent means normal
+
+`pinned` entries must never be removed, archived, or downgraded by a dream.
+`ephemeral` entries are expected to be short-lived and may be hard-deleted
+once past their usefulness.
+
 The store regenerates `INDEX.md` deterministically by reading frontmatter, so
 keep the frontmatter accurate.
+
+## Archive
+
+Retiring an entry means MOVING it to `archive/<original relative path>`
+(e.g. `topics/x.md` → `archive/topics/x.md`), never silently deleting it.
+Add retirement frontmatter to the archived file:
+
+    retired_at: <timestamp>
+    retired_reason: <why this entry was retired>
+    superseded_by: <slug of the replacing entry, if any>
+
+Only `topics/` and `incidents/` are indexed — archived entries drop out of
+`INDEX.md` automatically. Every dream that reinforces, archives, or discards
+appends one line per decision to `archive/LOG.md`: what changed, why, and —
+for discarded unanchored flags — the stated reason.
 """
 
 
@@ -91,6 +124,11 @@ class MarkdownWorkspace:
 
     async def file_view(self) -> Path:
         return self.path
+
+
+def _is_guarded(rel: str) -> bool:
+    """True for files the commit guards watch: `topics/` and `incidents/`."""
+    return rel.startswith(("topics/", "incidents/"))
 
 
 def _kebab(value: str) -> str:
@@ -108,17 +146,12 @@ def _kebab(value: str) -> str:
     return "".join(out) or "untitled"
 
 
-def _read_frontmatter(path: Path) -> dict[str, Any] | None:
-    """Return parsed YAML frontmatter from a markdown file, or None.
+def _parse_frontmatter(text: str) -> dict[str, Any] | None:
+    """Parse YAML frontmatter from markdown text, or None.
 
-    A file without a leading ``---`` block, with malformed YAML, or with a
-    non-mapping document is treated as having no frontmatter — the indexer
-    skips it.
+    Text without a leading ``---`` block, with malformed YAML, or with a
+    non-mapping document is treated as having no frontmatter.
     """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
     if not text.startswith("---"):
         return None
     rest = text[3:]
@@ -133,6 +166,15 @@ def _read_frontmatter(path: Path) -> dict[str, Any] | None:
     if not isinstance(loaded, dict):
         return None
     return loaded
+
+
+def _read_frontmatter(path: Path) -> dict[str, Any] | None:
+    """Return parsed YAML frontmatter from a markdown file, or None."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return _parse_frontmatter(text)
 
 
 def _walk_markdown(root: Path, subdir: str) -> list[tuple[Path, dict[str, Any]]]:
@@ -285,10 +327,25 @@ class MarkdownLTMStore:
         root: str | Path,
         regenerate_index: bool = True,
         schema_text: str | None = None,
+        max_autonomous_removals: int | None = None,
+        enforce_pinned: bool = True,
+        on_guard_violation: Literal["fail", "warn"] = "fail",
     ) -> None:
+        if on_guard_violation not in ("fail", "warn"):
+            raise ConfigError(
+                "MarkdownLTMStore: on_guard_violation must be 'fail' or 'warn', "
+                f"got {on_guard_violation!r}"
+            )
+        if max_autonomous_removals is not None and max_autonomous_removals < 0:
+            raise ConfigError(
+                "MarkdownLTMStore: max_autonomous_removals must be >= 0 or null"
+            )
         self.root = Path(root)
         self.regenerate_index = regenerate_index
         self.schema_text = schema_text or DEFAULT_SCHEMA_TEXT
+        self.max_autonomous_removals = max_autonomous_removals
+        self.enforce_pinned = enforce_pinned
+        self.on_guard_violation = on_guard_violation
         self._lock = asyncio.Lock()
         self._open_workspaces: dict[str, MarkdownWorkspace] = {}
         self._ensure_root()
@@ -357,6 +414,15 @@ class MarkdownLTMStore:
             old_tree = _scan_tree(self.root)
             diff = _diff_trees(old_tree, new_tree)
 
+            violations = self._guard_violations(old_tree, new_tree)
+            if violations:
+                summary = "; ".join(violations)
+                if self.on_guard_violation == "fail":
+                    # Raise before any mutation: the canonical tree stays
+                    # untouched and the orchestrator's failure path takes over.
+                    raise WorkspaceError(f"LTM commit guard violation(s): {summary}")
+                logger.warning("LTM commit guard violation(s) (warn mode): %s", summary)
+
             _replace_tree(self.root, new_tree)
             self._open_workspaces.pop(ws.id, None)
             shutil.rmtree(internal.path, ignore_errors=True)
@@ -367,6 +433,51 @@ class MarkdownLTMStore:
             (self.root / "incidents").mkdir(parents=True, exist_ok=True)
             (self.root / "_meta").mkdir(parents=True, exist_ok=True)
             return diff
+
+    def _guard_violations(
+        self, old_tree: Mapping[str, bytes], new_tree: Mapping[str, bytes]
+    ) -> list[str]:
+        """Deterministic commit-time safety rails.
+
+        A *removal* is a ``topics/`` or ``incidents/`` file present in the
+        canonical tree but absent from the committed tree without a
+        counterpart at ``archive/<original relative path>`` — archival moves
+        are not removals. ``pinned`` entries may be edited in place but never
+        removed, archived, or downgraded.
+        """
+        violations: list[str] = []
+
+        removed = [rel for rel in old_tree if _is_guarded(rel) and rel not in new_tree]
+        true_removals = sorted(rel for rel in removed if f"archive/{rel}" not in new_tree)
+        if (
+            self.max_autonomous_removals is not None
+            and len(true_removals) > self.max_autonomous_removals
+        ):
+            violations.append(
+                f"removal budget exceeded: {len(true_removals)} removal(s) > "
+                f"max_autonomous_removals={self.max_autonomous_removals}; "
+                f"offending paths: {true_removals}"
+            )
+
+        if self.enforce_pinned:
+            for rel in sorted(old_tree):
+                if not _is_guarded(rel) or not rel.endswith(".md"):
+                    continue
+                fm = _parse_frontmatter(old_tree[rel].decode("utf-8", errors="replace"))
+                if fm is None or fm.get("importance") != "pinned":
+                    continue
+                if rel not in new_tree:
+                    action = "archived" if f"archive/{rel}" in new_tree else "removed"
+                    violations.append(f"pinned entry {rel!r} may not be {action}")
+                    continue
+                new_fm = _parse_frontmatter(
+                    new_tree[rel].decode("utf-8", errors="replace")
+                )
+                if new_fm is None or new_fm.get("importance") != "pinned":
+                    violations.append(
+                        f"pinned entry {rel!r} may not have its importance downgraded"
+                    )
+        return violations
 
     async def discard_workspace(
         self, ws: Workspace, *, ctx: DiscardWorkspaceContext

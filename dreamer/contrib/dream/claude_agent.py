@@ -62,6 +62,39 @@ edits. When information already lives in a topic, update that topic; when an
 event is genuinely new, create an incident under `incidents/<YYYY-MM>/`.
 Keep frontmatter accurate (slugs, tags, sources, related links).
 
+# Reinforce and prune
+
+The batch may carry agent feedback about existing LTM entries: aggregated
+confirmations ("this guidance proved useful") and flags ("this guidance
+proved wrong — here is what I observed"). Apply this policy:
+
+- **Signal hierarchy** (strongest first): evidenced flags > absence of
+  confirmations > age. Age alone is only a tiebreaker, never a reason to
+  prune on its own.
+- **Reinforce**: for each confirmed target, increment its `confirmations`
+  frontmatter count and set `last_confirmed` to the report's latest
+  timestamp.
+- **Weaken, then flip**: a single flag against a well-confirmed entry
+  weakens it — annotate the entry with the contradiction and record the
+  decision in the operations log — rather than rewriting it. Rewrite or
+  supersede only when flags corroborate (multiple independent flags, or
+  evidence you can verify from the batch). A flag against a
+  `importance: pinned` entry is NEVER acted on autonomously — record it
+  prominently in the operations log for human attention.
+- **Dispose of every flag**: each flag must end this run either attributed
+  to an entry and acted on, identified as a synthesis problem to fix in the
+  context bundle, or explicitly discarded with a reason in the operations
+  log. Nothing lingers unresolved.
+- **Retirement is archival**: retire an entry by MOVING it to
+  `archive/<original relative path>` with `retired_at`, `retired_reason`,
+  and (when superseded) `superseded_by` frontmatter. Hard deletion is
+  reserved for `importance: ephemeral` entries and exact duplicates.
+- **Prune candidates**: `ephemeral` entries past their usefulness and old
+  incidents with zero confirmations. Be conservative — consolidation and
+  contradiction-resolution carry the value; aggressive time-decay does not.
+- **Log every decision**: append one line per reinforce/archive/discard
+  decision to `archive/LOG.md` (what changed, why).
+
 # STM input
 """
 
@@ -76,6 +109,21 @@ in long-term memory (LTM).
   in `context/_meta/schema.md`. `AGENTS.md` is the entry point; skills live
   under `skills/<skill-name>/SKILL.md` with frontmatter (`name`,
   `description`, `version`).
+
+# Anchors and feedback instructions
+
+Generated context must close the feedback loop:
+
+1. Guidance derived from an LTM topic carries a VISIBLE `[mem: <slug>]`
+   marker in the text (plain visible text, not an HTML comment — some
+   clients strip comments), where `<slug>` is the source topic's slug.
+2. The bundle includes a short standing instruction telling agents to call
+   the `confirm_context` tool when guidance marked `[mem: <slug>]` proves
+   useful, and the `flag_context` tool (with what they observed) when it
+   proves wrong or misleading, passing the slug from the marker.
+
+Markers are hints, not a gate: missing markers degrade feedback quality but
+never break anything.
 
 # What changed
 

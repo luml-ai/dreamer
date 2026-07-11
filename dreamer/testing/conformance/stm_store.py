@@ -36,6 +36,7 @@ def _now() -> datetime:
 def _make_memory(
     *,
     tenant_id: str = "default",
+    type: str = "observation",
     title: str = "obs",
     content: str = "body",
     idempotency_key: str | None = None,
@@ -44,7 +45,7 @@ def _make_memory(
     return Memory(
         tenant_id=tenant_id,
         agent_id="agent-1",
-        type="observation",
+        type=type,
         title=title,
         content=content,
         submitted_at=submitted_at or _now(),
@@ -308,6 +309,37 @@ class STMStoreConformance:
             await stm_store.list_unconsumed(
                 ctx=ListUnconsumedContext(request_id="r1", tenant_id="default")
             )
+
+    @pytest.mark.asyncio
+    async def test_count_unconsumed_excludes_types(self, stm_store: STMStore) -> None:
+        with TenantScope.set("default"):
+            ctx = SubmitContext(request_id="r1", tenant_id="default")
+            for i in range(2):
+                await stm_store.submit(_make_memory(title=f"obs{i}"), ctx=ctx)
+            for i in range(3):
+                await stm_store.submit(
+                    _make_memory(type="context_confirmed", title=f"conf{i}"), ctx=ctx
+                )
+            total = await stm_store.count_unconsumed(
+                ctx=CountContext(request_id="r1", tenant_id="default")
+            )
+            assert total == 5
+            filtered = await stm_store.count_unconsumed(
+                ctx=CountContext(
+                    request_id="r1",
+                    tenant_id="default",
+                    exclude_types=("context_confirmed",),
+                )
+            )
+            assert filtered == 2
+            all_excluded = await stm_store.count_unconsumed(
+                ctx=CountContext(
+                    request_id="r1",
+                    tenant_id="default",
+                    exclude_types=("context_confirmed", "observation"),
+                )
+            )
+            assert all_excluded == 0
 
     @pytest.mark.asyncio
     async def test_submit_unknown_id_remains_unique(self, stm_store: STMStore) -> None:

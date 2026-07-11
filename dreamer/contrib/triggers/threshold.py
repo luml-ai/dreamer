@@ -48,6 +48,7 @@ class STMCountThresholdTrigger:
         interval_seconds: float,
         stm_store: STMStore,
         tenant_id: TenantId = "default",
+        exclude_types: list[str] | None = None,
     ) -> None:
         if not name:
             raise ConfigError("STMCountThresholdTrigger: name must be a non-empty string")
@@ -59,6 +60,7 @@ class STMCountThresholdTrigger:
         self.tenant_id = tenant_id
         self.threshold = threshold
         self.interval_seconds = interval_seconds
+        self.exclude_types = tuple(exclude_types or ())
         self._stm_store = stm_store
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
@@ -99,7 +101,11 @@ class STMCountThresholdTrigger:
     async def _run(self, services: TriggerStartServices) -> None:
         assert self._stop_event is not None
         request_id = f"trigger.{self.tenant_id}.{self.name}"
-        ctx = CountContext(request_id=request_id, tenant_id=self.tenant_id)
+        ctx = CountContext(
+            request_id=request_id,
+            tenant_id=self.tenant_id,
+            exclude_types=self.exclude_types,
+        )
         while not self._stop_event.is_set():
             try:
                 await self._poll_once(ctx=ctx, services=services)

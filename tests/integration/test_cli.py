@@ -108,6 +108,34 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
     assert "dreamer.contrib.stm.sqlite.SQLiteSTMStore" in contents
 
 
+def test_init_scaffold_wires_feedback_and_passes_config_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["init", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    contents = (tmp_path / "dreamer.yaml").read_text(encoding="utf-8")
+    for needle in (
+        "name: context_confirmed",
+        "name: context_flagged",
+        "dreamer.contrib.mcp_tools.feedback.ConfirmContextTool",
+        "dreamer.contrib.mcp_tools.feedback.FlagContextTool",
+        "exclude_types: [context_confirmed, context_flagged]",
+        "max_autonomous_removals: 5",
+        "enforce_pinned: true",
+        "on_guard_violation: fail",
+    ):
+        assert needle in contents, f"scaffold missing: {needle!r}"
+
+    # Relative paths in the scaffold (./dreamer.db, ./workspace) resolve
+    # against the project directory.
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(main, ["config", "check", str(tmp_path / "dreamer.yaml")])
+    assert result.exit_code == 0, result.output
+    assert "config check: OK" in result.output
+
+
 @pytest.mark.asyncio
 async def test_serve_runtime_lifecycle_drains(tmp_path: Path) -> None:
     """Drive the lifecycle directly via the runtime helper the CLI uses,
