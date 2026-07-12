@@ -211,6 +211,7 @@ class InMemorySTMStore:
             if m.tenant_id == ctx.tenant_id
             and m.consumed_at is None
             and m.consumed_by_lease is None
+            and m.type not in ctx.exclude_types
         )
 
     async def release_for_expired_leases(self, *, ctx: ReclaimContext) -> int:

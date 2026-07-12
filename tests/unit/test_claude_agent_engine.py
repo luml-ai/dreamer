@@ -560,3 +560,41 @@ async def test_local_runner_translates_timeout_to_dream_failed(
             sandbox=tmp_path,
             timeout_seconds=0.05,
         )
+
+
+def test_composed_ltm_prompt_carries_reinforce_prune_policy() -> None:
+    engine = ClaudeAgentDreamEngine(
+        serializer=JsonlSerializer(), runner=_RecordingRunner()
+    )
+    prompt = engine._compose_ltm_prompt(ctx=_ltm_ctx(_batch([_make_memory("m1")])))
+    for needle in (
+        "# Reinforce and prune",
+        "evidenced flags > absence of",
+        "Age alone is only a tiebreaker",
+        "increment its `confirmations`",
+        "last_confirmed",
+        "Weaken, then flip",
+        "pinned",
+        "Dispose of every flag",
+        "Retirement is archival",
+        "archive/<original relative path>",
+        "archive/LOG.md",
+    ):
+        assert needle in prompt, f"LTM prompt missing: {needle!r}"
+
+
+def test_composed_context_prompt_carries_anchor_and_feedback_contract() -> None:
+    engine = ClaudeAgentDreamEngine(
+        serializer=JsonlSerializer(), runner=_RecordingRunner()
+    )
+    prompt = engine._compose_context_prompt(ctx=_context_ctx(diff=Diff(added=["a"])))
+    for needle in (
+        "[mem: <slug>]",
+        "VISIBLE",
+        "not an HTML comment",
+        "standing instruction",
+        "confirm_context",
+        "flag_context",
+        "Markers are hints, not a gate",
+    ):
+        assert needle in prompt, f"context prompt missing: {needle!r}"

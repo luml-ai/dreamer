@@ -29,6 +29,7 @@ from dreamer.api.types import (
     Diff,
     Memory,
     MemoryBatch,
+    MemorySubmission,
     Principal,
     TenantId,
     UsageEvent,
@@ -45,6 +46,11 @@ if TYPE_CHECKING:
 
 EmitProgress = Callable[[str, Mapping[str, Any]], Awaitable[None]]
 Clock = Callable[[], datetime]
+
+# The shared memory-submit pipeline, bound to the active request. Takes
+# `submit_memory`-shaped args; returns one MemorySubmission per persisted
+# memory (empty when pre-submit hooks filtered everything).
+SubmitMemory = Callable[[Mapping[str, Any]], Awaitable[list[MemorySubmission]]]
 
 
 # Opaque marker for transactional handles; concrete impls supply their own.
@@ -113,6 +119,7 @@ class ReleaseContext:
 class CountContext:
     request_id: str
     tenant_id: TenantId
+    exclude_types: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -305,6 +312,10 @@ class MCPToolContext:
     tenant_id: TenantId
     principal: Principal
     tool_name: str
+    submit_memory: SubmitMemory | None = None
+    """Shared memory-submit pipeline bound to this request. Runs the same
+    validation, hooks, and idempotency semantics as the built-in
+    `submit_memory` tool; raises `MemorySubmitError` on rejection."""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -726,6 +737,7 @@ __all__ = [
     "SerializeServices",
     "SetContextPendingContext",
     "SubmitContext",
+    "SubmitMemory",
     "SubscribeContext",
     "TenancyContext",
     "TenantConfigLookupContext",

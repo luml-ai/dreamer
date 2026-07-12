@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -15,6 +16,7 @@ from dreamer.api.contexts import (
     OpenWorkspaceContext,
     SetContextPendingContext,
 )
+from dreamer.api.errors import ConfigError, WorkspaceError
 from dreamer.api.stores import ContextPendingStore
 from dreamer.api.tenants import TenantScope
 from dreamer.api.types import Diff, FileViewable
@@ -43,7 +45,14 @@ def store_no_index(tmp_path: Path) -> MarkdownLTMStore:
     return MarkdownLTMStore(root=tmp_path / "memory", regenerate_index=False)
 
 
-def _topic(slug: str, *, title: str, tags: list[str], body: str = "body") -> str:
+def _topic(
+    slug: str,
+    *,
+    title: str,
+    tags: list[str],
+    body: str = "body",
+    extra_fm: str = "",
+) -> str:
     return (
         f"---\n"
         f"title: {title}\n"
@@ -52,6 +61,7 @@ def _topic(slug: str, *, title: str, tags: list[str], body: str = "body") -> str
         f"tags: {tags!r}\n"
         f"created_at: 2026-05-02T00:00:00Z\n"
         f"updated_at: 2026-05-02T00:00:00Z\n"
+        f"{extra_fm}"
         f"---\n\n# {title}\n\n{body}\n"
     )
 
@@ -237,6 +247,228 @@ async def test_file_without_frontmatter_skipped(store: MarkdownLTMStore) -> None
         )
         index_text = (store.root / INDEX_FILENAME).read_text(encoding="utf-8")
         assert "no-frontmatter" not in index_text
+
+
+@pytest.mark.asyncio
+async def test_archived_entries_excluded_from_index(store: MarkdownLTMStore) -> None:
+    with TenantScope.set("default"):
+        ws = await store.open_workspace(
+            ctx=OpenWorkspaceContext(request_id="r1", tenant_id="default")
+        )
+        view = await ws.file_view()  # type: ignore[attr-defined]
+        (view / "topics" / "alive.md").write_text(
+            _topic("alive", title="Alive topic", tags=["x"]), encoding="utf-8"
+        )
+        archived = view / "archive" / "topics" / "retired.md"
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        archived.write_text(
+            _topic("retired", title="Retired topic", tags=["x"]).replace(
+                "---\n\n#",
+                "retired_at: 2026-07-01T00:00:00Z\n"
+                "retired_reason: superseded\n"
+                "superseded_by: alive\n"
+                "---\n\n#",
+            ),
+            encoding="utf-8",
+        )
+        (view / "archive" / "LOG.md").write_text(
+            "- 2026-07-01: archived topics/retired.md (superseded by alive)\n",
+            encoding="utf-8",
+        )
+        diff = await store.commit_workspace(
+            ws, ctx=CommitWorkspaceContext(request_id="r1", tenant_id="default")
+        )
+        assert "archive/topics/retired.md" in diff.added
+        assert "archive/LOG.md" in diff.added
+        assert (store.root / "archive" / "topics" / "retired.md").is_file()
+
+        index_text = (store.root / INDEX_FILENAME).read_text(encoding="utf-8")
+        assert "Alive topic" in index_text
+        assert "Retired topic" not in index_text
+        assert "archive/" not in index_text
+
+
+def test_schema_text_documents_reinforcement_and_archive() -> None:
+    from dreamer.contrib.ltm.markdown import DEFAULT_SCHEMA_TEXT
+
+    for needle in (
+        "confirmations:",
+        "last_confirmed:",
+        "importance: pinned | normal | ephemeral",
+        "archive/<original relative path>",
+        "archive/LOG.md",
+        "retired_at:",
+        "retired_reason:",
+        "superseded_by:",
+    ):
+        assert needle in DEFAULT_SCHEMA_TEXT, f"schema text missing: {needle!r}"
+
+
+async def _commit_files(
+    store: MarkdownLTMStore, files: dict[str, str], *, delete: list[str] | None = None
+) -> None:
+    with TenantScope.set("default"):
+        ws = await store.open_workspace(
+            ctx=OpenWorkspaceContext(request_id="r", tenant_id="default")
+        )
+        view = await ws.file_view()  # type: ignore[attr-defined]
+        for rel, text in files.items():
+            dest = view / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        for rel in delete or []:
+            (view / rel).unlink()
+        await store.commit_workspace(
+            ws, ctx=CommitWorkspaceContext(request_id="r", tenant_id="default")
+        )
+
+
+def _five_topics() -> dict[str, str]:
+    return {
+        f"topics/t{i}.md": _topic(f"t{i}", title=f"T{i}", tags=["x"]) for i in range(5)
+    }
+
+
+@pytest.mark.asyncio
+async def test_removal_budget_enforced(tmp_path: Path) -> None:
+    store = MarkdownLTMStore(root=tmp_path / "memory", max_autonomous_removals=2)
+    await _commit_files(store, _five_topics())
+
+    with TenantScope.set("default"):
+        ws = await store.open_workspace(
+            ctx=OpenWorkspaceContext(request_id="r", tenant_id="default")
+        )
+        view = await ws.file_view()  # type: ignore[attr-defined]
+        for i in range(3):
+            (view / "topics" / f"t{i}.md").unlink()
+        with pytest.raises(WorkspaceError) as exc:
+            await store.commit_workspace(
+                ws, ctx=CommitWorkspaceContext(request_id="r", tenant_id="default")
+            )
+    message = str(exc.value)
+    assert "max_autonomous_removals=2" in message
+    for i in range(3):
+        assert f"topics/t{i}.md" in message
+        assert (store.root / "topics" / f"t{i}.md").is_file()
+
+
+@pytest.mark.asyncio
+async def test_archival_does_not_count_against_budget(tmp_path: Path) -> None:
+    store = MarkdownLTMStore(root=tmp_path / "memory", max_autonomous_removals=2)
+    await _commit_files(store, _five_topics())
+
+    with TenantScope.set("default"):
+        ws = await store.open_workspace(
+            ctx=OpenWorkspaceContext(request_id="r", tenant_id="default")
+        )
+        view = await ws.file_view()  # type: ignore[attr-defined]
+        for i in range(3):
+            src = view / "topics" / f"t{i}.md"
+            dest = view / "archive" / "topics" / f"t{i}.md"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(
+                src.read_text(encoding="utf-8").replace(
+                    "---\n\n#",
+                    "retired_at: 2026-07-11T00:00:00Z\n"
+                    "retired_reason: stale\n"
+                    "---\n\n#",
+                ),
+                encoding="utf-8",
+            )
+            src.unlink()
+        await store.commit_workspace(
+            ws, ctx=CommitWorkspaceContext(request_id="r", tenant_id="default")
+        )
+    index_text = (store.root / INDEX_FILENAME).read_text(encoding="utf-8")
+    for i in range(3):
+        assert (store.root / "archive" / "topics" / f"t{i}.md").is_file()
+        assert f"topics/t{i}.md)" not in index_text
+
+
+@pytest.mark.asyncio
+async def test_pinned_entry_protected(tmp_path: Path) -> None:
+    pinned = _topic("keep", title="Keep", tags=["x"], extra_fm="importance: pinned\n")
+
+    async def fresh_store(idx: int) -> MarkdownLTMStore:
+        store = MarkdownLTMStore(root=tmp_path / f"memory{idx}")
+        await _commit_files(store, {"topics/keep.md": pinned})
+        return store
+
+    async def commit_mutation(
+        store: MarkdownLTMStore, mutate: Any
+    ) -> None:
+        with TenantScope.set("default"):
+            ws = await store.open_workspace(
+                ctx=OpenWorkspaceContext(request_id="r", tenant_id="default")
+            )
+            view = await ws.file_view()  # type: ignore[attr-defined]
+            mutate(view)
+            await store.commit_workspace(
+                ws, ctx=CommitWorkspaceContext(request_id="r", tenant_id="default")
+            )
+
+    def delete(view: Path) -> None:
+        (view / "topics" / "keep.md").unlink()
+
+    def archive(view: Path) -> None:
+        dest = view / "archive" / "topics" / "keep.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        (view / "topics" / "keep.md").rename(dest)
+
+    def downgrade(view: Path) -> None:
+        path = view / "topics" / "keep.md"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "importance: pinned", "importance: normal"
+            ),
+            encoding="utf-8",
+        )
+
+    for idx, mutate in enumerate((delete, archive, downgrade)):
+        store = await fresh_store(idx)
+        with pytest.raises(WorkspaceError, match="topics/keep.md"):
+            await commit_mutation(store, mutate)
+        assert (store.root / "topics" / "keep.md").is_file()
+
+    # In-place content edit that keeps `importance: pinned` commits fine.
+    def edit(view: Path) -> None:
+        path = view / "topics" / "keep.md"
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\nnew insight\n", encoding="utf-8"
+        )
+
+    store = await fresh_store(99)
+    await commit_mutation(store, edit)
+    text = (store.root / "topics" / "keep.md").read_text(encoding="utf-8")
+    assert "new insight" in text
+
+
+@pytest.mark.asyncio
+async def test_warn_mode_lets_violating_commit_through(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = MarkdownLTMStore(
+        root=tmp_path / "memory",
+        max_autonomous_removals=2,
+        on_guard_violation="warn",
+    )
+    await _commit_files(store, _five_topics())
+
+    with caplog.at_level("WARNING", logger="dreamer.contrib.ltm.markdown"):
+        await _commit_files(
+            store, {}, delete=[f"topics/t{i}.md" for i in range(3)]
+        )
+    for i in range(3):
+        assert not (store.root / "topics" / f"t{i}.md").exists()
+    assert any("guard violation" in r.message for r in caplog.records)
+    assert any("max_autonomous_removals=2" in r.message for r in caplog.records)
+
+
+def test_invalid_guard_params_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        MarkdownLTMStore(root=tmp_path / "m1", on_guard_violation="explode")  # type: ignore[arg-type]
+    with pytest.raises(ConfigError):
+        MarkdownLTMStore(root=tmp_path / "m2", max_autonomous_removals=-1)
 
 
 @pytest.mark.asyncio

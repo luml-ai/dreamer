@@ -43,7 +43,7 @@ from dreamer.api.contexts import (
     SubmitContext,
     TenancyContext,
 )
-from dreamer.api.errors import ValidationError
+from dreamer.api.errors import MemorySubmitError, ValidationError
 from dreamer.api.rate_limit import RateLimiter
 from dreamer.api.runtime_state import RequestState
 from dreamer.api.stores import MCPTool, STMStore
@@ -51,6 +51,7 @@ from dreamer.api.tenants import TenantConfigProvider, TenantScope
 from dreamer.api.types import (
     AuditEvent,
     Memory,
+    MemorySubmission,
     MemoryType,
     Principal,
     TenantId,
@@ -277,6 +278,7 @@ async def _dispatch(
         for tool in pipeline.mcp_tools:
             if tool.name == tool_name:
                 return await _handle_custom_tool(
+                    pipeline=pipeline,
                     tool=tool,
                     args=args,
                     tenant_id=tenant_id,
@@ -289,6 +291,7 @@ async def _dispatch(
 
 async def _handle_custom_tool(
     *,
+    pipeline: MCPPipeline,
     tool: MCPTool,
     args: Mapping[str, Any],
     tenant_id: TenantId,
@@ -300,14 +303,27 @@ async def _handle_custom_tool(
         jsonschema.validate(instance=dict(args), schema=dict(schema))
     except jsonschema.ValidationError as exc:
         return _error_block("invalid_args", exc.message)
+
+    async def _submit(memory_args: Mapping[str, Any]) -> list[MemorySubmission]:
+        return await submit_memories(
+            pipeline=pipeline,
+            args=memory_args,
+            tenant_id=tenant_id,
+            principal=principal,
+            request_id=request_id,
+        )
+
     ctx = MCPToolContext(
         request_id=request_id,
         tenant_id=tenant_id,
         principal=principal,
         tool_name=tool.name,
+        submit_memory=_submit,
     )
     try:
         result = await tool.call(args, ctx=ctx)
+    except MemorySubmitError as exc:
+        return _error_block(exc.code, str(exc))
     except Exception as exc:  # noqa: BLE001 — surface tool error
         logger.exception("MCPTool %r raised", tool.name)
         return _error_block("tool_error", str(exc))
@@ -322,6 +338,37 @@ async def _handle_submit_memory(
     principal: Principal,
     request_id: str,
 ) -> list[mcp_types.TextContent]:
+    try:
+        submissions = await submit_memories(
+            pipeline=pipeline,
+            args=args,
+            tenant_id=tenant_id,
+            principal=principal,
+            request_id=request_id,
+        )
+    except MemorySubmitError as exc:
+        return _error_block(exc.code, str(exc))
+    if not submissions:
+        return _ok_block({"submitted": [], "filtered": True})
+    return _ok_block({"submitted": [_memory_to_dict(s.memory) for s in submissions]})
+
+
+async def submit_memories(
+    *,
+    pipeline: MCPPipeline,
+    args: Mapping[str, Any],
+    tenant_id: TenantId,
+    principal: Principal,
+    request_id: str,
+) -> list[MemorySubmission]:
+    """The shared memory-submit pipeline behind `submit_memory` and any
+    `MCPTool` that stores memories (via `MCPToolContext.submit_memory`).
+
+    Every entry point gets identical semantics: type governance, metadata
+    schema validation, pre/post hooks, and store idempotency. Raises
+    `MemorySubmitError` on rejection; returns `[]` when pre-submit hooks
+    filtered every candidate.
+    """
     tenant_config = await pipeline.tenant_config_provider.get(
         tenant_id,
         ctx=_tenant_lookup_ctx(request_id, tenant_id),
@@ -349,16 +396,16 @@ async def _handle_submit_memory(
             max_content_bytes=pipeline.max_content_bytes,
         )
     except ValidationError as exc:
-        return _error_block("invalid_args", str(exc))
+        raise MemorySubmitError("invalid_args", str(exc)) from exc
     if candidate.type not in type_names:
-        return _error_block(
+        raise MemorySubmitError(
             "type_not_allowed",
             f"memory type {candidate.type!r} is not allowed; "
             f"effective types: {sorted(type_names)}",
         )
     schema_check = _validate_metadata(candidate, type_by_name.get(candidate.type))
     if schema_check is not None:
-        return _error_block("invalid_metadata", schema_check)
+        raise MemorySubmitError("invalid_metadata", schema_check)
 
     memories: list[Memory] = [candidate]
     pre_ctx = PreMemorySubmitContext(
@@ -382,34 +429,40 @@ async def _handle_submit_memory(
             ),
             ctx=AuditContext(request_id=request_id, tenant_id=tenant_id),
         )
-        return _error_block("hook_failed", f"pre_memory_submit: {exc}")
+        raise MemorySubmitError("hook_failed", f"pre_memory_submit: {exc}") from exc
 
     if not memories:
-        return _ok_block({"submitted": [], "filtered": True})
+        return []
 
-    persisted: list[Memory] = []
+    submissions: list[MemorySubmission] = []
     for mem in memories:
         # Hook may have appended a different type; re-check.
         if mem.type not in type_names:
-            return _error_block(
+            raise MemorySubmitError(
                 "type_not_allowed",
                 f"hook-emitted memory type {mem.type!r} is not allowed; "
                 f"effective types: {sorted(type_names)}",
             )
-        bound = mem.model_copy(update={"tenant_id": tenant_id})
+        # Pre-assigning the id lets us detect idempotency dedup: the store
+        # returns the previously persisted memory (different id) on a hit.
+        bound = mem.model_copy(
+            update={"tenant_id": tenant_id, "id": mem.id or str(uuid.uuid4())}
+        )
         submit_ctx = SubmitContext(
             request_id=request_id,
             tenant_id=tenant_id,
             principal_id=principal.id,
         )
         stored = await pipeline.stm_store.submit(bound, ctx=submit_ctx)
-        persisted.append(stored)
+        submissions.append(
+            MemorySubmission(memory=stored, deduplicated=stored.id != bound.id)
+        )
 
     post_ctx = PostMemorySubmitContext(
         request_id=request_id,
         tenant_id=tenant_id,
         principal=principal,
-        persisted=tuple(persisted),
+        persisted=tuple(s.memory for s in submissions),
     )
     for hook in pipeline.hook_registry.get("post_memory_submit"):
         try:
@@ -419,7 +472,7 @@ async def _handle_submit_memory(
                 "post_memory_submit hook %r raised; continuing", type(hook).__qualname__
             )
 
-    return _ok_block({"submitted": [_memory_to_dict(m) for m in persisted]})
+    return submissions
 
 
 def _build_memory(
@@ -576,4 +629,5 @@ __all__ = [
     "build_mcp_mount",
     "create_mcp_server",
     "new_request_id",
+    "submit_memories",
 ]

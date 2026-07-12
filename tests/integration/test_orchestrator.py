@@ -376,7 +376,7 @@ class AlwaysProceedGate:
 @dataclass
 class World:
     stm: InMemorySTMStore
-    ltm: InMemoryLTMStore
+    ltm: Any
     context_store: InMemoryContextStore
     leases: InMemoryDreamLeaseStore
     job_queue: InProcessJobQueue
@@ -391,7 +391,7 @@ class World:
 
 async def make_world(
     *,
-    ltm: InMemoryLTMStore | None = None,
+    ltm: Any | None = None,
     context_store: InMemoryContextStore | None = None,
     leases: InMemoryDreamLeaseStore | None = None,
     engine: Any | None = None,
@@ -1252,5 +1252,81 @@ async def test_unknown_tenant_skipped() -> None:
         assert not any(
             e.event_type == "dream.lease_acquired" for e in w.audit.events
         )
+    finally:
+        await w.orchestrator.stop(ctx=LifecycleContext(request_id="test.stop"))
+
+
+@pytest.mark.asyncio
+async def test_ltm_guard_failure_flows_through_dream_failure_path(
+    tmp_path: Any,
+) -> None:
+    from dreamer.contrib.ltm.markdown import MarkdownLTMStore
+
+    ltm = MarkdownLTMStore(root=tmp_path / "memory", max_autonomous_removals=0)
+    seed = ltm.root / "topics" / "seed.md"
+    seed.write_text(
+        "---\ntitle: Seed\nslug: seed\ntype: topic\ntags: []\n"
+        "created_at: 2026-07-01T00:00:00Z\nupdated_at: 2026-07-01T00:00:00Z\n"
+        "---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+    class DeletingOnceEngine:
+        multi_tenant: ClassVar[bool] = True
+        workspace_requirements: ClassVar[Mapping[str, frozenset[type]]] = {
+            "ltm": frozenset(),
+            "context": frozenset(),
+        }
+        accepted_serializer_kinds: ClassVar[frozenset[str]] = frozenset({"*"})
+
+        def __init__(self) -> None:
+            self.ltm_runs = 0
+
+        async def run_ltm_phase(self, *, ctx: Any, services: Any) -> None:
+            self.ltm_runs += 1
+            ws_path = await services.ltm_workspace.file_view()
+            if self.ltm_runs == 1:
+                (ws_path / "topics" / "seed.md").unlink()
+            else:
+                (ws_path / "topics" / "extra.md").write_text(
+                    "---\ntitle: Extra\nslug: extra\ntype: topic\ntags: []\n"
+                    "created_at: 2026-07-02T00:00:00Z\n"
+                    "updated_at: 2026-07-02T00:00:00Z\n---\n\nbody\n",
+                    encoding="utf-8",
+                )
+
+        async def run_context_phase(self, *, ctx: Any, services: Any) -> None:
+            ws_path = await services.context_workspace.file_view()
+            (ws_path / "AGENTS.md").write_text("ctx", encoding="utf-8")
+
+    engine_cls = implements(LTMPhaseRunner, version=1)(DeletingOnceEngine)
+    engine_cls = implements(ContextPhaseRunner, version=1)(engine_cls)
+    engine = engine_cls()
+    failed_hook = _CapturingDreamFailed()
+    w = await make_world(ltm=ltm, engine=engine, on_dream_failed=[failed_hook])
+    try:
+        await _submit(w.stm, "default", 2)
+        await _publish_and_wait(w.orchestrator, "default")
+
+        # Guard tripped: dream_failed fired with the guard error, the canonical
+        # tree is untouched, and the batch is back in STM.
+        assert len(failed_hook.records) == 1
+        assert "guard violation" in failed_hook.records[0].error
+        assert seed.is_file()
+        with TenantScope.set("default"):
+            count = await w.stm.count_unconsumed(
+                ctx=CountContext(request_id="r", tenant_id="default")
+            )
+        assert count == 2
+
+        # The next dream claims the same batch and succeeds.
+        await _publish_and_wait(w.orchestrator, "default")
+        assert engine.ltm_runs == 2
+        with TenantScope.set("default"):
+            count = await w.stm.count_unconsumed(
+                ctx=CountContext(request_id="r", tenant_id="default")
+            )
+        assert count == 0
+        assert (ltm.root / "topics" / "extra.md").is_file()
     finally:
         await w.orchestrator.stop(ctx=LifecycleContext(request_id="test.stop"))

@@ -661,18 +661,56 @@ stm_store:
         description: A general observation that may not be obvious from the code.
       - name: code_snippet
         description: A useful code pattern worth preserving.
+      - name: context_confirmed
+        description: >-
+          Keep-alive feedback: context guidance identified by an LTM slug
+          proved useful. Consumed in aggregate at dream time.
+        metadata_schema:
+          type: object
+          required: [target]
+          properties:
+            target:
+              type: string
+              pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      - name: context_flagged
+        description: >-
+          Correction feedback: context guidance proved wrong or misleading.
+          Content is the observation narrative; metadata may anchor it to
+          LTM slugs and quote the misleading bundle text.
+        metadata_schema:
+          type: object
+          properties:
+            targets:
+              type: array
+              items:
+                type: string
+                pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            quote:
+              type: string
 
 ltm_store:
   class: dreamer.contrib.ltm.markdown.MarkdownLTMStore
   params:
     root: ./workspace/memory
+    # Commit-time safety rails: budget on autonomous removals (archival moves
+    # are exempt), protection of `importance: pinned` entries, and whether a
+    # violation fails the dream or only warns.
+    max_autonomous_removals: 5
+    enforce_pinned: true
+    on_guard_violation: fail
 
 context_store:
   class: dreamer.contrib.context.markdown.MarkdownContextStore
   params:
     root: ./workspace/context
 
-mcp_tools: []
+mcp_tools:
+  # Feedback loop: agents confirm context guidance that proved useful and
+  # flag guidance that proved wrong. Both submit through the same pipeline
+  # as `submit_memory` (the `context_confirmed` / `context_flagged` types
+  # above must stay declared).
+  - class: dreamer.contrib.mcp_tools.feedback.ConfirmContextTool
+  - class: dreamer.contrib.mcp_tools.feedback.FlagContextTool
 
 dream_lease_store:
   class: dreamer.contrib.stm.sqlite.SQLiteDreamLeaseStore
@@ -687,7 +725,6 @@ dream_engine:
   class: dreamer.contrib.dream.claude_agent.ClaudeAgentDreamEngine
   params:
     serializer: { ref: stm_serializer }
-    mode: auto
     timeout_seconds: 1200
 
 triggers:
@@ -695,6 +732,15 @@ triggers:
     params:
       name: external
       tenant_id: default
+  - class: dreamer.contrib.triggers.threshold.STMCountThresholdTrigger
+    params:
+      name: stm_threshold
+      threshold: 20
+      interval_seconds: 60
+      stm_store: { ref: stm_store }
+      # Feedback alone never fires a dream: confirmations and flags are
+      # excluded from the unconsumed count.
+      exclude_types: [context_confirmed, context_flagged]
 
 dream_gates: []
 

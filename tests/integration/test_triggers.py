@@ -152,7 +152,13 @@ def test_cron_trigger_empty_name_rejected() -> None:
         CronTrigger(name="", expression="* * * * *")
 
 
-async def _submit_n(stm: InMemorySTMStore, tenant_id: TenantId, n: int) -> None:
+async def _submit_n(
+    stm: InMemorySTMStore,
+    tenant_id: TenantId,
+    n: int,
+    *,
+    type: str = "observation",
+) -> None:
     from datetime import UTC, datetime
 
     with TenantScope.set(tenant_id):
@@ -161,7 +167,7 @@ async def _submit_n(stm: InMemorySTMStore, tenant_id: TenantId, n: int) -> None:
                 Memory(
                     tenant_id=tenant_id,
                     agent_id="a",
-                    type="observation",
+                    type=type,
                     title=f"m{i}",
                     content="x",
                     submitted_at=datetime.now(UTC),
@@ -246,6 +252,33 @@ async def test_threshold_trigger_re_fires_after_drop_and_recross(
         await _submit_n(stm, "default", 2)
         await queue.wait_published(count=2, deadline_seconds=2.0)
         assert len(queue.published) == 2
+    finally:
+        await host.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_threshold_trigger_ignores_excluded_types(
+    queue: CapturingJobQueue,
+) -> None:
+    stm = InMemorySTMStore()
+    trigger = STMCountThresholdTrigger(
+        name="bigbatch",
+        threshold=3,
+        interval_seconds=0.05,
+        stm_store=stm,
+        exclude_types=["context_confirmed", "context_flagged"],
+    )
+    host = _make_host(triggers=[trigger], queue=queue)
+    await host.start_all()
+    try:
+        await _submit_n(stm, "default", 5, type="context_confirmed")
+        await _submit_n(stm, "default", 2)
+        await asyncio.sleep(0.2)
+        assert queue.published == []
+
+        await _submit_n(stm, "default", 1)
+        await queue.wait_published(count=1, deadline_seconds=2.0)
+        assert len(queue.published) == 1
     finally:
         await host.stop_all()
 

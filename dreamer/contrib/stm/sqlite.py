@@ -443,6 +443,8 @@ class SQLiteSTMStore:
                     memories_table.c.consumed_by_lease.is_(None),
                 )
             )
+            if ctx.exclude_types:
+                stmt = stmt.where(memories_table.c.type.not_in(list(ctx.exclude_types)))
             return int((await session.execute(stmt)).scalar_one())
 
     async def release_for_expired_leases(self, *, ctx: ReclaimContext) -> int:

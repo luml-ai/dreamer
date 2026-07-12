@@ -19,6 +19,18 @@ class ValidationError(DreamerError):
     """Request payload validation failure (e.g. unknown memory type, oversize)."""
 
 
+class MemorySubmitError(DreamerError):
+    """The shared memory-submit pipeline rejected a submission.
+
+    ``code`` is the structured error identifier surfaced to MCP callers
+    (e.g. ``type_not_allowed``, ``invalid_metadata``, ``hook_failed``).
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class LeaseHeldError(DreamerError):
     """Dream lease is already held by another worker."""
 

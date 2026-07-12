@@ -52,6 +52,18 @@ class Memory(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class MemorySubmission(BaseModel):
+    """Outcome of persisting one memory through the shared submit pipeline.
+
+    ``deduplicated`` is true when the store returned a previously persisted
+    memory for the same ``(tenant_id, idempotency_key)`` instead of storing a
+    new one.
+    """
+
+    memory: Memory
+    deduplicated: bool = False
+
+
 class MemoryBatch(BaseModel):
     lease_id: str
     tenant_id: TenantId
@@ -187,6 +199,7 @@ __all__ = [
     "GraphViewable",
     "Memory",
     "MemoryBatch",
+    "MemorySubmission",
     "MemoryType",
     "Principal",
     "RateLimitDecision",

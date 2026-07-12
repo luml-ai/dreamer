@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="#get-started">Get started</a> ·
+  <a href="#feedback-and-pruning">Feedback and pruning</a> ·
   <a href="#extensions">Extensions</a> ·
   <a href="https://luml.ai/blog/2026/dreamer-self-evolving-agents">Blogpost</a>
 </p>
@@ -30,16 +31,13 @@ agents.
 auth, triggers, and hooks are Python `Protocol`s wired up from YAML. Swap
 any default by pointing at a different class.
 
+**Memory that prunes itself.** Agents report whether context guidance held
+up in practice. Dreams reinforce confirmed entries and retire contradicted
+ones, archiving rather than deleting.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/Dataforce-Solutions/static_assets/blob/main/CTA-Compact-Light.png?raw=true" >
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Dataforce-Solutions/static_assets/blob/main/CTA-Compact-Dark.png?raw=true">
-  <img alt="Image" src="https://github.com/Dataforce-Solutions/static_assets/blob/main/CTA-Compact-Light.png?raw=true">
-</picture>
 
 <hr>
 Dreamer is part of the broader <a href="https://github.com/luml-ai/luml">LUML</a> effort to build open infrastructure for autonomous ML agents. <br/><br/>
-
 
 <div align="center">
 
@@ -92,8 +90,8 @@ dreamer serve
 Point Claude Code or any MCP client over streamable-http at
 `http://localhost:8080/mcp/` with `Authorization: Bearer <token>`. The
 server advertises a `submit_memory` tool whose accepted types come from your
-config. Out of the box, those are `observation`, `failure`, and
-`code_snippet`.
+config — out of the box `observation`, `failure`, and `code_snippet` — plus
+the `confirm_context` and `flag_context` feedback tools described below.
 
 Cron is the default trigger. To fire a one-shot dream from the command
 line:
@@ -101,6 +99,40 @@ line:
 ```bash
 dreamer dream --trigger external
 ```
+
+## Feedback and pruning
+
+Generated context marks guidance derived from long-term memory with a
+visible `[mem: <slug>]` marker and instructs agents to report back through
+two MCP tools. `confirm_context` records that the guidance proved useful.
+`flag_context` records that it proved wrong, with the observed evidence.
+Flags may name target slugs, quote the misleading text, or carry neither.
+
+Feedback goes through the same pipeline as `submit_memory`, but the dream
+receives confirmations as a single aggregate report, and the scaffolded
+threshold trigger excludes feedback types from its count. Feedback alone
+does not trigger a dream.
+
+Each dream applies a conservative policy. Evidenced flags outweigh missing
+confirmations, and age is only a tiebreaker. A single flag weakens a
+well-confirmed entry; corroborated flags supersede it. Retiring an entry
+moves it to an `archive/` subtree with retirement frontmatter, and every
+decision is logged in `archive/LOG.md`.
+
+The store enforces safety rails at commit time:
+
+```yaml
+ltm_store:
+  class: dreamer.contrib.ltm.markdown.MarkdownLTMStore
+  params:
+    root: ./workspace/memory
+    max_autonomous_removals: 5   # archival moves are exempt
+    enforce_pinned: true         # `importance: pinned` entries stay put
+    on_guard_violation: fail     # or `warn`
+```
+
+A violating commit fails before any mutation and the batch returns to STM
+for the next run.
 
 ## Extensions
 
