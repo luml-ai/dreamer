@@ -3,14 +3,12 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
-
   build:
-    needs: ci
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,11 +29,14 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+
     environment:
       name: pypi
       url: https://pypi.org/p/dreamer-server
+
     permissions:
       id-token: write
+
     steps:
       - uses: actions/download-artifact@v4
         with:
