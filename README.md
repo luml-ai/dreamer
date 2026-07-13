@@ -14,6 +14,16 @@
   <a href="https://luml.ai/blog/2026/dreamer-self-evolving-agents">Blogpost</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/luml-ai/dreamer">
+    <picture>
+      <source media="(prefers-color-scheme: light)" srcset="assets/star-cta-light.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="assets/star-cta-dark.svg">
+      <img alt="Dreams run on stars — give the repo a star" src="assets/star-cta-light.svg" width="600">
+    </picture>
+  </a>
+</p>
+
 Dreamer keeps your team's `AGENTS.md` and skills up to date with what your
 coding agents learn while they work. It runs as a self-hostable MCP server
 that collects memories from every agent on the team and, on a schedule,
@@ -218,6 +228,3 @@ class TestPostgresSTMStore(STMStoreConformance):
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-
-

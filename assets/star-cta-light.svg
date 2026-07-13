@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 190" width="100%"
+     preserveAspectRatio="xMidYMid meet"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif">
+  <title>Dreams run on stars. Star the repo on GitHub</title>
+  <defs>
+    <style>
+      .headline  { font-weight: 700; font-size: 31px; fill: #0f172a; }
+      .subline   { font-weight: 500; font-size: 18px; fill: #334155; }
+      .btn-label { font-weight: 600; font-size: 22px; fill: #0f172a; }
+      .ink       { fill: none; stroke: #0f172a; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .paper     { fill: #ffffff; }
+      .star-fill { fill: #2563eb; stroke: #2563eb; stroke-width: 2; stroke-linejoin: round; }
+      .spark-ln  { stroke: #2563eb; stroke-width: 2.5; stroke-linecap: round; }
+      .plus-one  { font-weight: 700; font-size: 20px; fill: #2563eb; }
+
+      #btn-press {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: press 7s ease-in-out infinite;
+      }
+      #star-pop {
+        transform-box: fill-box;
+        transform-origin: center;
+        opacity: 0;
+        animation: star-pop 7s ease infinite;
+      }
+      #cursor-anim {
+        opacity: 0;
+        animation: cursor 7s ease-in-out infinite;
+      }
+      #plus-one-anim {
+        opacity: 0;
+        animation: plus-one 7s ease-out infinite;
+      }
+      .spark {
+        opacity: 0;
+        animation: spark 7s ease-out infinite;
+      }
+      #glow-anim {
+        animation: glow 7s ease-in-out infinite;
+      }
+
+      @keyframes cursor {
+        0%   { transform: translate(150px, 85px); opacity: 0; }
+        7%   { opacity: 1; }
+        24%  { transform: translate(0px, 0px); opacity: 1; }
+        27%  { transform: translate(1.5px, 1.5px); }
+        30%  { transform: translate(0px, 0px); }
+        58%  { transform: translate(0px, 0px); opacity: 1; }
+        72%  { transform: translate(70px, 75px); opacity: 0; }
+        100% { transform: translate(150px, 85px); opacity: 0; }
+      }
+      @keyframes press {
+        0%, 26%   { transform: scale(1); }
+        28%       { transform: scale(0.95); }
+        31%, 100% { transform: scale(1); }
+      }
+      @keyframes star-pop {
+        0%, 28%   { opacity: 0; transform: scale(0.4); }
+        33%       { opacity: 1; transform: scale(1.18); }
+        37%       { opacity: 1; transform: scale(1); }
+        88%       { opacity: 1; transform: scale(1); }
+        94%       { opacity: 0; transform: scale(1); }
+        100%      { opacity: 0; transform: scale(0.4); }
+      }
+      @keyframes spark {
+        0%, 29%   { opacity: 0; transform: translateY(0px); }
+        34%       { opacity: 1; }
+        46%       { opacity: 0; transform: translateY(-13px); }
+        100%      { opacity: 0; transform: translateY(0px); }
+      }
+      @keyframes plus-one {
+        0%, 29%   { opacity: 0; transform: translateY(6px); }
+        34%       { opacity: 1; }
+        52%       { opacity: 0; transform: translateY(-16px); }
+        100%      { opacity: 0; transform: translateY(6px); }
+      }
+      @keyframes glow {
+        0%, 100%  { opacity: 0.5; }
+        50%       { opacity: 1; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #btn-press, #star-pop, #cursor-anim, #plus-one-anim, .spark, #glow-anim {
+          animation: none;
+        }
+      }
+    </style>
+
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#2563eb" stop-opacity="0.12"/>
+      <stop offset="70%" stop-color="#2563eb" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#2563eb" stop-opacity="0"/>
+    </radialGradient>
+
+    <path id="star-shape" d="M 0 -13 L 3.29 -4.53 L 12.36 -4.02 L 5.33 1.73 L 7.64 10.52
+                             L 0 5.6 L -7.64 10.52 L -5.33 1.73 L -12.36 -4.02 L -3.29 -4.53 Z"/>
+  </defs>
+
+  <!-- ============ TEXT ============ -->
+  <text x="56" y="88"  class="headline">Dreams run on stars.</text>
+  <text x="56" y="124" class="subline">Star the repo to support development.</text>
+
+  <!-- ============ GLOW ============ -->
+  <ellipse id="glow-anim" cx="661" cy="95" rx="115" ry="72" fill="url(#glow)"/>
+
+  <!-- ============ STAR BUTTON ============ -->
+  <g transform="translate(600,68)">
+    <g id="btn-press">
+      <rect x="0" y="0" width="122" height="54" rx="11" class="paper"/>
+      <rect x="0" y="0" width="122" height="54" rx="11" class="ink"/>
+      <g transform="translate(33,27)">
+        <use href="#star-shape" class="ink"/>
+        <use id="star-pop" href="#star-shape" class="star-fill"/>
+      </g>
+      <text x="56" y="35" class="btn-label">Star</text>
+    </g>
+  </g>
+
+  <!-- ============ SPARKLES (around the star icon) ============ -->
+  <g transform="translate(633,95)">
+    <g transform="rotate(-30)"><line class="spark spark-ln" x1="0" y1="-20" x2="0" y2="-27"/></g>
+    <g transform="rotate(30)"><line class="spark spark-ln" x1="0" y1="-22" x2="0" y2="-28"/></g>
+    <g transform="rotate(100)"><line class="spark spark-ln" x1="0" y1="-20" x2="0" y2="-26"/></g>
+    <g transform="rotate(180)"><line class="spark spark-ln" x1="0" y1="-21" x2="0" y2="-28"/></g>
+    <g transform="rotate(-100)"><line class="spark spark-ln" x1="0" y1="-22" x2="0" y2="-29"/></g>
+  </g>
+
+  <!-- ============ +1 ============ -->
+  <text id="plus-one-anim" x="661" y="52" text-anchor="middle" class="plus-one">+1</text>
+
+  <!-- ============ CURSOR ============ -->
+  <g transform="translate(658,97)">
+    <g id="cursor-anim">
+      <path d="M 0 0 L 0 16.5 L 3.9 13.2 L 6.6 19.2 L 9.3 18 L 6.7 12.1 L 11.7 11.7 Z"
+            class="paper" stroke="#0f172a" stroke-width="1.8" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
